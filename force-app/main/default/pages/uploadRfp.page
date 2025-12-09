@@ -1,0 +1,56 @@
+<apex:page standardController="RFP__c"
+    recordSetVar="selected"
+    showHeader="false"
+    sidebar="false"
+    docType="html-5.0">
+
+    <apex:slds />
+    <script src="/lightning/lightning.out.js"></script>
+
+    <div id="vfOverlay" 
+         style="display:flex;align-items:center;justify-content:center;height:100vh;background:rgba(0,0,0,0.5);">
+        <div id="lwcContainer"
+             style="width:90%;max-width:900px;background:white;border-radius:12px;
+                    box-shadow:0 4px 25px rgba(0,0,0,0.3);padding:1rem;">
+            <div style="text-align:center;color:#999;">Loading RFP Upload...</div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Lightning Out App (uploadRfp must be enabled in Setup)
+        $Lightning.use("c:uploadRfp", function() {
+            $Lightning.createComponent(
+                "c:FileUploadAndExtractText",
+                { recordIds: "{!selected}" },
+                "lwcContainer",
+                function() {
+                    console.log("✅ LWC loaded inside VF via Lightning Out");
+                }
+            );
+        });
+
+        // Listen to messages from LWC
+        window.addEventListener("message", function(event) {
+            if (!event.data || !event.data.action) return;
+
+            console.log("📩 Received event:", event.data);
+
+            switch (event.data.action) {
+                case "toast":
+                    showVFToast(event.data.title, event.data.message, event.data.variant);
+                    break
+                    case "cancel":
+                    window.top.location.href = '/lightning/o/RFP__c/home';
+                    break;
+                    // Closes VF window if in popup
+                case "proceed":
+                    if (event.data.recordId) {
+                        window.top.location.href = '/' + event.data.recordId;
+                    } else {
+                        window.top.location.href = '/lightning/o/RFP__c/home';
+                    }
+                    break;
+            }
+        });
+    </script>
+</apex:page>

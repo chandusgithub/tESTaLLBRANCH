@@ -1,0 +1,204 @@
+public class OpportunityTriggerHandler {
+   
+    public static void populateSalesDebriefOnBeforeUpdate(List<Opportunity> newList, Map<Id,Opportunity> oldMap){
+        system.debug('OPP Trigger fired');
+        Id oppRecordTypeId = Schema.SObjectType.Opportunity.getRecordTypeInfosByName().get('CD Membership Activity (Prospect or Aggregator)').getRecordTypeId();
+        Id equityHealthCareId = System.Label.Equity_Healthcare_Aggregator;//[Select id from Account where name = 'Equity Healthcare' AND RecordType.Name = 'Aggregator'][0].Id; //Querying Equity Healthcare as Lookup fields will not come in trigger
+        List<Opportunity> medOppList = new List<Opportunity>();
+        Set<Id> specialtyOppIdSet = new Set<Id>();
+        List<OpportunityLineItem> specialtyOliList = new List<OpportunityLineItem>();
+        Set<Id> eligibleSpecialtyOppId = new Set<Id>();
+        
+        for(Opportunity opp:newList){
+            if(opp.RecordTypeId == oppRecordTypeId && opp.Product_Type_Involved_in_Opp__c != null){
+                if(opp.Product_Type_Involved_in_Opp__c.contains('Medical')){
+                    medOppList.add(opp);
+                }
+                else if(!opp.Product_Type_Involved_in_Opp__c.contains('Medical') && (opp.Product_Type_Involved_in_Opp__c.contains('Vision') || opp.Product_Type_Involved_in_Opp__c.contains('Dental') || opp.Product_Type_Involved_in_Opp__c.contains('Other Buy Up Programs'))){
+                    specialtyOppIdSet.add(opp.Id);
+                }
+            }
+        }
+        
+        if(medOppList.size() > 0){
+            for(Opportunity opp:medOppList){
+                if((opp.Disposition_Medical__c == 'Sold' || opp.Disposition_Medical__c == 'Lost: Finalist' || opp.Disposition_Medical__c == 'Lost: Non-Finalist')
+                   && (opp.Aggregator_Involved_in_the_Oppty_Risk__c != equityHealthCareId && opp.Membership_Activity_Type__c != 'Private Exchange')){
+                       opp.Sales_Debrief__c = 'Comprehensive Medical';
+                   }
+                else{
+                    system.debug('medical else');
+                    specialtyOppIdSet.add(opp.Id);
+                    opp.Sales_Debrief__c = '';
+                }
+            }
+        }
+        
+        specialtyOliList = [SELECT id,name,OpportunityId,Disposition_Other_Buy_Up_Programs__c,Opportunity.Disposition_Dental__c,Opportunity.Disposition_Vision__c,Estimated_Additional_New_Members__c,Opportunity.WillThrBeaRFP__c,Opportunity.Sales_Debrief__c
+                            FROM OpportunityLineItem
+                            WHERE OpportunityId IN:specialtyOppIdSet AND Opportunity.Aggregator_Involved_in_the_Oppty_Risk__r.Name != 'Equity Healthcare' AND Opportunity.Membership_Activity_Type__c != 'Private Exchange'
+                            AND((((Product_Line__c = 'Dental' AND Product2.Family = 'Specialty Products' AND Opportunity.Disposition_Dental__c IN ('Sold', 'Lost: Finalist', 'Lost: Non-Finalist')) 
+                                  OR (Product_Line__c = 'Vision' AND Product2.Family = 'Specialty Products' AND Opportunity.Disposition_Vision__c IN ('Sold', 'Lost: Finalist', 'Lost: Non-Finalist')))
+                                 AND (Opportunity.WillThrBeaRFP__c IN ('Yes, RFP is Certain', 'Yes, RFP is Likely') 
+                                      OR Net_Results__c != 0 OR (Estimated_Additional_New_Members__c > 0 AND Net_Results__c = 0)))
+                                OR((Product_Line__c = 'Other' AND Product2.Family = 'Specialty Products' AND Disposition_Other_Buy_Up_Programs__c IN ('Sold', 'Lost: Finalist', 'Lost: Non-Finalist'))
+                                   AND (Opportunity.WillThrBeaRFP__c IN ('Yes, RFP is Certain', 'Yes, RFP is Likely')
+                                        OR Net_Results__c != 0 OR (Estimated_Additional_New_Members__c > 0 AND Net_Results__c = 0))))];
+        
+        system.debug('specialtyOliList '+specialtyOliList);
+        
+        if(specialtyOliList.size() > 0){
+            for(OpportunityLineItem oli:specialtyOliList){
+                eligibleSpecialtyOppId.add(oli.OpportunityId);
+            }
+            
+            for(Opportunity opp:newList){
+                if(eligibleSpecialtyOppId.contains(opp.Id) && opp.Sales_Debrief__c != 'Comprehensive Medical'){
+                    opp.Sales_Debrief__c = 'Specialty Only';
+                }
+            }
+        }
+        else{
+            system.debug('inside specialty else');
+            for(Opportunity opp:newList){
+                if(!medOppList.contains(opp)){
+                    system.debug('opp.RecordTypeId - '+opp.RecordTypeId);
+                    system.debug('oppRecordTypeId - '+oppRecordTypeId);
+                    if(opp.RecordTypeId == oppRecordTypeId){
+                        system.debug('inside specialty inner if '+opp.Name);
+                        opp.Sales_Debrief__c = '';
+                    }
+                }
+            }
+        }
+    }
+    
+    public static void afterUpdate(List<Opportunity> newList, Map<Id, Opportunity> oldMap) {
+        /***************************************************
+         * 1. Opportunity → Strategy Memo mapping table
+         ***************************************************/
+        List<FieldMapping> mappings = new List<FieldMapping>{
+            new FieldMapping('Notes_taken_on_call_with_consultant__c', 'Notes_taken_on_call_with_consultant__c'),
+            new FieldMapping('Is_the_Client_in_the_Cannabis_Business__c', 'Is_the_Client_in_the_Cannabis_Business__c'),
+            new FieldMapping('EffectiveDate__c', 'Effective_Date__c'),
+            new FieldMapping('Finalist_Date_Medical__c', 'Finalist_Date__c'),
+            new FieldMapping('Anticipated_Actual_Close_Date_Medical__c', 'Anticipated_Actual_Close_Date__c'),
+            new FieldMapping('Deal_Sponsor__c', 'Deal_Sponsor__c'),
+            new FieldMapping('Executive_Sponsor__c', 'Executive_Sponsor__c'),
+            new FieldMapping('SCE_Assignment__c', 'SCE_Assignment_Traditional__c'),
+            new FieldMapping('Financial_Strategy_Lead__c', 'Financial_Strategy_Lead__c'),
+            new FieldMapping('Specialty_Benefits_SVP__c', 'Specialty_SVP__c'),
+            new FieldMapping('Surest_SVP_Involved__c', 'Surest_SVP__c'),
+            new FieldMapping('Owner_Name__c', 'Sales_Vice_President_CD__c'),
+            new FieldMapping('Proposal_Due_Date_Medical__c', 'Proposal_Date_Due__c'),
+            new FieldMapping('Proposal_Received_Date_Medical__c', 'Proposal_Date_Received__c'),
+            new FieldMapping('Id', 'Salesforce_Opportunity_ID__c'),
+            new FieldMapping('Strategy_Call_Date__c', 'Strategy_Call_Date__c'),
+            new FieldMapping('vs_Aetna__c', 'Vs_Aetna__c'),
+            new FieldMapping('vs_Anthem__c', 'Vs_Anthem__c'),
+            new FieldMapping('vs_Blues__c', 'Vs_Blues__c'),
+            new FieldMapping('vs_Blues_Alt__c', 'Vs_Blues_Alt__c'),
+            new FieldMapping('vs_Cigna__c', 'Vs_Cigna__c'),
+            new FieldMapping('Opportunity_Average_Contract_Size_ACS__c', 'Acs__c'),
+            new FieldMapping('Aggregator_Involved_in_the_Oppty_Risk__c','Aggregator_involved_in_the_opportunity__c')
+        };
+
+
+        /***************************************************
+         * 2. Detect opportunities where ANY mapped field changed
+         ***************************************************/
+        Set<Id> changedOppIds = new Set<Id>();
+
+        for (Opportunity newOpp : newList) {
+            Opportunity oldOpp = oldMap.get(newOpp.Id);
+            
+			 if (newOpp.Sales_Stage_Medical__c == 'Notified') {
+                continue;
+            }
+
+            for (FieldMapping m : mappings) {
+                Object newVal = newOpp.get(m.sourceField);
+                Object oldVal = oldOpp.get(m.sourceField);
+
+                if (newVal != oldVal) {
+                    changedOppIds.add(newOpp.Id);
+                    break; // one changed field is enough
+                }
+            }
+        }
+        if (changedOppIds.isEmpty()) return;
+
+
+        /***************************************************
+         * 3. Query related Strategy Memos
+         ***************************************************/
+        List<Strategy_Memo__c> memoList = [
+            SELECT Id, Membership_Activity__c
+            FROM Strategy_Memo__c
+            WHERE Membership_Activity__c IN :changedOppIds
+        ];
+		System.debug('memoList --> '+memoList);
+        if (memoList.isEmpty()) return;
+
+
+        /***************************************************
+         * 4. Map new Opportunity values to Memos
+         ***************************************************/
+        Map<Id, Opportunity> oppMap = new Map<Id, Opportunity>(newList);
+        List<Strategy_Memo__c> memosToUpdate = new List<Strategy_Memo__c>();
+
+        for (Strategy_Memo__c memo : memoList) {
+            Opportunity opp = oppMap.get(memo.Membership_Activity__c);
+            if (opp == null) continue;
+
+            for (FieldMapping m : mappings) {
+            Object val = opp.get(m.sourceField);
+        	if (val == null) {
+                continue; // do not update field
+            }
+
+            if (val instanceof Boolean) {
+                Boolean boolVal = (Boolean) val;
+                memo.put(m.targetField, boolVal != null ? boolVal : false);
+            }
+            else if (val instanceof Date) {
+                memo.put(m.targetField, (Date) val);
+            }
+            else if (val instanceof Datetime) {
+                memo.put(m.targetField, (Datetime) val);
+            }
+        	else if (val instanceof Decimal) {
+                memo.put(m.targetField, String.valueOf(val));
+            }
+        	else {
+                memo.put(m.targetField, val);
+            }
+        }
+
+
+            memosToUpdate.add(memo);
+        }
+
+        /***************************************************
+         * 5. Update Strategy Memo records
+         ***************************************************/
+        if (!memosToUpdate.isEmpty()) {
+            update memosToUpdate;
+        }
+    }
+
+
+    /***************************************************
+     * Helper Class for Field Mapping
+     ***************************************************/
+    public class FieldMapping {
+        public String sourceField;  // Opportunity field
+        public String targetField;  // Strategy Memo field
+
+        public FieldMapping(String source, String target) {
+            sourceField = source;
+            targetField = target;
+        }
+        
+    }
+}
